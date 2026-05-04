@@ -146,6 +146,7 @@ table_data <- blowdown %>%
     "States"                   = states,
     "Cumulative CH4 Emissions" = cumulative_ch4
   )
+
 ```
 
 <small> This table shows one row per facility with the following info:
