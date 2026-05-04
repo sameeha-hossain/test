@@ -1,0 +1,158 @@
+---
+title: "test markdown"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-05-01"
+---
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(glmnet)
+library(sf)  
+library(spatstat) 
+library(ggplot2)  
+library(leaflet)
+library(maps)
+library(tidyverse)
+library(skimr)
+library(gridExtra)
+library(knitr)
+```
+
+# Read in Dataset and Perform Summary Statistics
+```{r}
+blowdown=read.csv("/Users/sameehahossain/Desktop/R Files/ef_w_blowdown_ons_ng_trns_pl.csv")
+
+#view column names
+colnames(blowdown)
+
+#Data Quality / Structure (any data is missing or needs cleaning?)
+summary(blowdown)
+
+#numeric summary table
+blowdown %>%
+  select(number_of_blowdowns, total_ch4_emissions, total_co2_emissions) %>%
+  pivot_longer(everything(), names_to = "variable") %>%
+  group_by(variable) %>%
+  summarise(
+    n       = sum(!is.na(value)),
+    missing = sum(is.na(value)),
+    mean    = mean(value, na.rm = TRUE),
+    median  = median(value, na.rm = TRUE),
+    sd      = sd(value, na.rm = TRUE),
+    min     = min(value, na.rm = TRUE),
+    max     = max(value, na.rm = TRUE)
+  )
+
+```
+
+<small>The summary above shows the mean, median, and sd of our sample data.</small>
+
+## Facility Info
+
+```{r, echo=FALSE}
+# how many unique facilities
+n_distinct(blowdown$facility_id)  
+# Check if multiple facility names map to one facility ID
+blowdown %>%
+  group_by(facility_id) %>%
+  summarise(unique_names = n_distinct(facility_name)) %>%
+  filter(unique_names > 1)
+
+# Check if multiple facility IDs map to one facility name
+blowdown %>%
+  group_by(facility_name) %>%
+  summarise(unique_ids = n_distinct(facility_id)) %>%
+  filter(unique_ids > 1)
+```
+
+<small> A one-to-one match between the Facility Name and Facility ID was confirmed.</small>
+
+#Temporal Coverage
+<small> Looking at years with most/fewest reports. This should show which years have the most reporting activity. Gaps or sudden drops in a year could indicate incomplete data or a policy change in EPA reporting requirements.</small>
+```{r}
+table(blowdown$reporting_year)
+ggplot(blowdown, aes(x = reporting_year)) + geom_bar()
+t <- as.data.frame(table(blowdown$reporting_year))
+colnames(t) <- c("Reporting Year", "Count")
+kable(t)
+```
+<small> 2020 was year with max reports.</small>
+
+#Emissions Trends Over Time 
+<small> Shows whether total or average CH4 emissions are going up, down, or staying flat across the industry year over year.</small>
+```{r}
+blowdown %>% group_by(reporting_year) %>%
+  summarise(mean_ch4 = mean(total_ch4_emissions, na.rm=T),
+            total_ch4 = sum(total_ch4_emissions, na.rm=T)) %>%
+  ggplot(aes(x=reporting_year, y=total_ch4)) + geom_line()
+```
+<small> hows same thing as above.</small>
+
+
+#Top Emitters 
+<small> Will show which facilities are responsible for the most cumulative CH4 
+over all years. Useful for understanding whether emissions are concentrated 
+in a handful of bad actors or spread across many facilities).</small>
+```{r}
+blowdown %>% group_by(facility_name) %>%
+  summarise(total_ch4 = sum(total_ch4_emissions, na.rm=T)) %>%
+  slice_max(total_ch4, n=10)
+```
+
+#Blowdowns vs. CH4 Emissions
+<small> Tests whether more blowdown events at a facility  actually predict higher methane emissions. A strong correlation would confirm blowdowns are a meaningful driver of leakage; a weak one suggests other factors (facility size, equipment type) matter more).</small>  
+
+```{r}
+ggplot(blowdown, aes(x=number_of_blowdowns, y=total_ch4_emissions)) +
+  geom_point(alpha=0.4) + geom_smooth(method="lm") +
+  scale_y_log10() + scale_x_log10()
+cor(blowdown$number_of_blowdowns, blowdown$total_ch4_emissions, use="complete.obs")
+```
+
+<small> Just becasue you have more blowdown events does not mean you have more emissions.</small> 
+
+#Geographic Variation by State
+<small> Reveals which states have the highest total emissions (useful for identifying regional hotspots; potentiall states like Texas or Wyoming with heavy pipeline infrastructure will likely dominate).</small> 
+
+```{r}
+blowdown %>% group_by(us_state) %>%
+  summarise(total_ch4 = sum(total_ch4_emissions, na.rm=T)) %>%
+  arrange(desc(total_ch4))
+```
+<small> Texas is highest emitting state.</small> 
+
+#Panel Data Check of facilities reported across multiple years
+<small> Do the same facilities show up across multiple years?.</small> 
+
+```{r}
+table_data <- blowdown %>%
+  group_by(facility_id, facility_name) %>%
+  summarise(
+    count          = n(),
+    years_reported = paste(sort(unique(reporting_year)), collapse = ", "),
+    states         = paste(sort(unique(us_state)), collapse = ", "),
+    cumulative_ch4 = sum(total_ch4_emissions, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(count)) %>%
+  rename(
+    "Facility ID"              = facility_id,
+    "Facility Name"            = facility_name,
+    "Count"                    = count,
+    "Years Reported"           = years_reported,
+    "States"                   = states,
+    "Cumulative CH4 Emissions" = cumulative_ch4
+  )
+```
+
+<small> This table shows one row per facility with the following info:
+- Facility ID / Facility Name: identifies the facility
+- Count: how many times that facility appears in the dataset (i.e. how many years it reported data)
+- Years Reported: the specific years that facility submitted emissions data, listed out
+- States: the state(s) associated with that facility across its reports
+- Cumulative CH4 Emissions: the total methane emissions summed across all years that facility reported.</small> 
+
+<small> The table is sorted by Count descending, so facilities that reported the most years appear at the top to see which facilities have the longest reporting  history and how their total methane output compares to others.</small> 
